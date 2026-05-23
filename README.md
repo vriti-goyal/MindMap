@@ -28,6 +28,22 @@ MindMap is a state-of-the-art mind mapping platform that lets users auto-generat
 - **Dynamic Map Generation**: Leverages **`gemini-2.5-flash`** for JSON-governed map schemas (extracting key nodes, semantic edges, hierarchy levels, and relative coordinates).
 - **Database Storage Optimization**: Handles sequential database inserts bypassing `$transaction` wrappers to avoid deadlocks under transaction connection pooling schemes (e.g. Neon Pooler).
 
+### 5. 🎨 Interactive React Flow Canvas & Persistence (Phase 3)
+- **Fluid Canvas Engine**: Fully interactive infinite canvas leveraging **`@xyflow/react`** (Vite + React 19 + Tailwind v4 CSS) supporting custom node dragging, connections drawing, and zooming.
+- **Hierarchical Node Styling**: Custom React Flow nodes styled dynamically by importance: **Concepts** (root, with energetic gradients), **Subconcepts** (branches, with glassmorphism boundaries), and **Details** (leaves, with sleek minimalist cards).
+- **Sleek Inspector Drawer**: Side drawer layout triggers on node selection. Allows live editing of labels, modifying tier hierarchies (Concept ↔ Branch ↔ Leaf), and adding rich textual notes.
+- **Dynamic Child Spawning (Add Child)**: Rapid mind map expansion via parent node growth. Auto-spawns a child node positioned relative to the parent with automatic source-to-target connections.
+- **AI-Driven Auto-Title Summarization**: A sparkling AI action that leverages **`gemini-2.5-flash`** to analyze all current node labels on the canvas and summarize them into a high-context 3–6 word title.
+- **pgvector Sync Persistence**: Fully persistent CRUD API. Saving map states clears obsolete records and performs safe bulk inserts, maintaining dynamic updates to pgvector embeddings so search indexes stay perfectly aligned.
+
+### 6. 🔍 Full-Text Search, Document Links, and UI Polish (Phase 4)
+- **Advanced Multi-Field Search**: Runs full-text search against map titles, custom map tags, individual node labels, and contributing document names via high-performance Prisma SQL mappings (`GET /api/maps?search=query`). Includes 300ms frontend debounce logic.
+- **Implicit Map-Document Linking**: Integrates document parsing and map generation. Newly uploaded documents (PDFs, Images, URLs, YouTube videos) are saved automatically to the `Document` database model and linked to the map via an implicit many-to-many relationship.
+- **Contributed Documents Tab**: Sliding settings panel inside the editor includes a dedicated **Documents Used** scrollable list representing uploaded documents that contributed to this map (including direct source download links and document icons).
+- **Vector-Similarity Pre-Check Interceptor**: Implements **`POST /api/generate/check-similarity`** endpoint. Generates the context vector embedding and searches existing maps using **`pgvector`**. Intercepts map generation requests if a highly similar map (>70%) is found, giving the user a choice to open the existing map or generate a new map anyway.
+- **Blank Canvas Bootstrapper**: Onboarding state checks for zero active canvas nodes and renders a gorgeous glassmorphism onboarding card letting manual builders spawn a root Concept node instantly.
+- **Tailwind Breakpoints & Responsive Viewports**: Adapts navigation bars, settings, node inspector, and quick creators beautifully across mobile, tablet, and desktop viewports. Right drawer adapts to `w-full` on mobile viewports for clean navigation.
+
 ---
 
 ## 🛠️ Architecture & Core Pipeline

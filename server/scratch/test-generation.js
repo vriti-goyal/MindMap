@@ -20,7 +20,7 @@ async function runTest() {
     }
 
     // 2. Generate Token
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'secret');
+    const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET || 'secret');
 
     // 3. Prepare FormData
     const formData = new FormData();

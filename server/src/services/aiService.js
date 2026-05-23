@@ -56,7 +56,33 @@ const generateMapData = async (text, mode) => {
   }
 };
 
+const generateTitleFromNodes = async (nodeLabels) => {
+  try {
+    const systemInstruction = `You are a professional mind map categorizer. Based on a list of concept labels in a mind map, generate a highly descriptive, concise, and clean title for the map. 
+    The title must be between 3 to 6 words. Avoid quotation marks, markdown formatting, or prefix/suffix. Just return the raw text title.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: `Concept labels:\n${nodeLabels.join('\n')}` }]
+        }
+      ],
+      config: {
+        systemInstruction,
+      }
+    });
+
+    return response.text.trim();
+  } catch (error) {
+    console.error('Error generating AI title:', error);
+    throw new Error('Failed to generate title.');
+  }
+};
+
 module.exports = {
   generateEmbedding,
-  generateMapData
+  generateMapData,
+  generateTitleFromNodes
 };

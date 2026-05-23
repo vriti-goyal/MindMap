@@ -6,6 +6,7 @@ const path = require('path');
 const authRoutes = require('./routes/authRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const generationRoutes = require('./routes/generationRoutes');
+const mapRoutes = require('./routes/mapRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -22,6 +23,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/generate', generationRoutes);
+app.use('/api/maps', mapRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

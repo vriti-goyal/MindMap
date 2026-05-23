@@ -26,6 +26,7 @@ model Document {
   storageUrl  String?
   contentText String?
   createdAt   DateTime @default(now())
+  maps        Map[]    @relation("MapDocuments")
 }
 
 model Map {
@@ -38,6 +39,8 @@ model Map {
   embedding Unsupported("vector(768)")?
   nodes     Node[]
   edges     Edge[]
+  tags      String?  @default("")
+  documents Document[] @relation("MapDocuments")
 }
 
 model Node {
