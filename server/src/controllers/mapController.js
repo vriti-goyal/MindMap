@@ -7,9 +7,17 @@ const aiService = require('../services/aiService');
 const getMaps = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { search } = req.query;
+    const { search, tagId, folderId } = req.query;
 
     const where = { userId };
+    
+    if (tagId) {
+      where.mapTags = { some: { tagId } };
+    }
+    
+    if (folderId) {
+      where.folders = { some: { folderId } };
+    }
     
     if (search) {
       where.OR = [
@@ -23,7 +31,16 @@ const getMaps = async (req, res) => {
           }
         },
         {
-          documents: {
+          documentAttachments: {
+            some: {
+              document: {
+                title: { contains: search, mode: 'insensitive' }
+              }
+            }
+          }
+        },
+        {
+          legacyDocuments: {
             some: {
               title: { contains: search, mode: 'insensitive' }
             }
@@ -40,11 +57,36 @@ const getMaps = async (req, res) => {
         tags: true,
         createdAt: true,
         updatedAt: true,
-        documents: {
+        documentAttachments: {
+          select: {
+            document: {
+              select: {
+                id: true,
+                title: true,
+                sourceType: true
+              }
+            }
+          }
+        },
+        legacyDocuments: {
           select: {
             id: true,
             title: true,
             sourceType: true
+          }
+        },
+        folders: {
+          select: {
+            folder: {
+              select: { id: true, name: true }
+            }
+          }
+        },
+        mapTags: {
+          select: {
+            tag: {
+              select: { id: true, name: true, color: true }
+            }
           }
         }
       },
@@ -52,7 +94,34 @@ const getMaps = async (req, res) => {
         updatedAt: 'desc'
       }
     });
-    res.json(maps);
+
+    // Format output with merged documents
+    const formattedMaps = maps.map(map => {
+      const junctionDocs = map.documentAttachments.map(att => att.document);
+      const legacyDocs = map.legacyDocuments || [];
+      
+      const allDocsMap = new Map();
+      [...junctionDocs, ...legacyDocs].forEach(doc => {
+        allDocsMap.set(doc.id, doc);
+      });
+      
+      return {
+        id: map.id,
+        title: map.title,
+        tags: map.mapTags ? map.mapTags.map(mt => mt.tag) : [],
+        folders: map.folders ? map.folders.map(mf => mf.folder) : [],
+        legacyTags: map.tags || '',
+        createdAt: map.createdAt,
+        updatedAt: map.updatedAt,
+        documents: Array.from(allDocsMap.values()).map(doc => ({
+          id: doc.id,
+          title: doc.title,
+          sourceType: doc.sourceType
+        }))
+      };
+    });
+
+    res.json(formattedMaps);
   } catch (error) {
     console.error('Error fetching maps:', error);
     res.status(500).json({ error: 'Failed to retrieve mind maps.' });
@@ -73,7 +142,22 @@ const getMapById = async (req, res) => {
       include: {
         nodes: true,
         edges: true,
-        documents: true
+        documentAttachments: {
+          include: {
+            document: true
+          }
+        },
+        legacyDocuments: true,
+        folders: {
+          select: {
+            folder: { select: { id: true, name: true } }
+          }
+        },
+        mapTags: {
+          select: {
+            tag: { select: { id: true, name: true, color: true } }
+          }
+        }
       }
     });
 
@@ -95,15 +179,26 @@ const getMapById = async (req, res) => {
       target: edge.targetNodeId
     }));
 
+    // Merge and deduplicate documents
+    const junctionDocs = map.documentAttachments.map(att => att.document);
+    const legacyDocs = map.legacyDocuments || [];
+    
+    const allDocsMap = new Map();
+    [...junctionDocs, ...legacyDocs].forEach(doc => {
+      allDocsMap.set(doc.id, doc);
+    });
+
     res.json({
       id: map.id,
       title: map.title,
-      tags: map.tags || '',
+      tags: map.mapTags ? map.mapTags.map(mt => mt.tag) : [],
+      folders: map.folders ? map.folders.map(mf => mf.folder) : [],
+      legacyTags: map.tags || '',
       createdAt: map.createdAt,
       updatedAt: map.updatedAt,
       nodes: formattedNodes,
       edges: formattedEdges,
-      documents: map.documents.map(doc => ({
+      documents: Array.from(allDocsMap.values()).map(doc => ({
         id: doc.id,
         title: doc.title,
         sourceType: doc.sourceType,
@@ -310,11 +405,166 @@ const generateAiTitle = async (req, res) => {
   }
 };
 
+/**
+ * Import a mind map from an exported JSON format
+ */
+const importMap = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { version, map } = req.body;
+
+    if (!version || !map || !map.title || !Array.isArray(map.nodes) || !Array.isArray(map.edges)) {
+      return res.status(400).json({ error: 'Invalid map format', details: ['Missing required fields or wrong structure'] });
+    }
+
+    const { title, nodes, edges, folders, tags } = map;
+
+    // 1. Create the new Map entity
+    const newMap = await prisma.map.create({
+      data: {
+        userId,
+        title: `[Imported] ${title}`,
+        tags: '', // Legacy tags field, leave empty or we can add string tags later
+      }
+    });
+
+    const mapId = newMap.id;
+
+    // 2. Handle Tags
+    if (tags && Array.isArray(tags)) {
+      for (const t of tags) {
+        if (!t.name) continue;
+        // Find existing tag by name for this user
+        let existingTag = await prisma.tag.findFirst({
+          where: { userId, name: t.name }
+        });
+        
+        if (!existingTag) {
+          existingTag = await prisma.tag.create({
+            data: {
+              userId,
+              name: t.name,
+              color: t.color || '#3b82f6'
+            }
+          });
+        }
+        
+        await prisma.mapTag.create({
+          data: {
+            mapId,
+            tagId: existingTag.id
+          }
+        });
+      }
+    }
+
+    // 3. Handle Folders
+    if (folders && Array.isArray(folders)) {
+      for (const f of folders) {
+        if (!f) continue;
+        let existingFolder = await prisma.folder.findFirst({
+          where: { userId, name: f }
+        });
+
+        if (!existingFolder) {
+          existingFolder = await prisma.folder.create({
+            data: {
+              userId,
+              name: f
+            }
+          });
+        }
+
+        await prisma.mapFolder.create({
+          data: {
+            mapId,
+            folderId: existingFolder.id
+          }
+        });
+      }
+    }
+
+    // 4. Handle Nodes
+    // We must map old node IDs to new node IDs because the relationships in edges need to match the new IDs.
+    // However, the prompt says "All nodes with their positions, labels, and data", and "All edges with their source/target connections".
+    // We can just keep the IDs from the import if they don't collide, but the DB might have them as String/UUID.
+    // It's safer to just use the IDs as they come from the import since they are string IDs generated by React Flow (e.g. 'node-12345').
+    // Wait, if we use the exact same ID, and another map already has that ID? No, Prisma Node model `id` is primary key, if it collides it fails.
+    // We need to generate new UUIDs or React Flow IDs for the nodes, and map the old IDs to new IDs for the edges.
+    const idMapping = {};
+    for (const node of nodes) {
+      const newNodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      idMapping[node.id] = newNodeId;
+
+      await prisma.node.create({
+        data: {
+          id: newNodeId,
+          mapId,
+          type: node.type || 'concept',
+          label: node.data?.label || node.label || '',
+          xPos: parseFloat(node.position?.x) || 0,
+          yPos: parseFloat(node.position?.y) || 0,
+          content: node.data?.content || null
+        }
+      });
+    }
+
+    // 5. Handle Edges
+    for (const edge of edges) {
+      const sourceNodeId = idMapping[edge.source] || edge.source;
+      const targetNodeId = idMapping[edge.target] || edge.target;
+      
+      const newEdgeId = `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      await prisma.edge.create({
+        data: {
+          id: newEdgeId,
+          mapId,
+          sourceNodeId,
+          targetNodeId
+        }
+      });
+    }
+    
+    // 6. Generate Embeddings (Optional, similar to updateMap)
+    let embeddingStr = null;
+    try {
+      const nodeLabels = nodes.map(n => n.data?.label || n.label).filter(Boolean);
+      const tagNames = tags?.map(t => t.name).join(', ') || '';
+      const combinedText = `Title: ${newMap.title}\nTags: ${tagNames}\n\nConcepts: ${nodeLabels.join(', ')}`;
+      const embedding = await aiService.generateEmbedding(combinedText);
+      embeddingStr = `[${embedding.join(',')}]`;
+    } catch (embError) {
+      console.warn('Embedding generation warning during import:', embError);
+    }
+
+    if (embeddingStr) {
+      await prisma.$queryRaw`
+        UPDATE "Map"
+        SET embedding = ${embeddingStr}::vector
+        WHERE id = ${mapId}
+      `;
+    }
+
+    res.status(201).json({
+      mapId,
+      mapTitle: newMap.title,
+      nodeCount: nodes.length,
+      edgeCount: edges.length
+    });
+
+  } catch (error) {
+    console.error('Error importing map:', error);
+    res.status(500).json({ error: 'Failed to import mind map.', details: [error.message] });
+  }
+};
+
 module.exports = {
   getMaps,
   getMapById,
   createMap,
   updateMap,
   deleteMap,
-  generateAiTitle
+  generateAiTitle,
+  importMap
 };

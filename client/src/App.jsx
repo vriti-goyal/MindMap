@@ -5,6 +5,9 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import MapEditor from './pages/MapEditor';
+import MyUploads from './pages/MyUploads';
+import ExploreSimilarity from './pages/ExploreSimilarity';
+import TagManager from './pages/TagManager';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -23,10 +26,34 @@ function App() {
             } 
           />
           <Route 
+            path="/uploads" 
+            element={
+              <ProtectedRoute>
+                <MyUploads />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/explore" 
+            element={
+              <ProtectedRoute>
+                <ExploreSimilarity />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
             path="/maps/:id" 
             element={
               <ProtectedRoute>
                 <MapEditor />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/settings/tags" 
+            element={
+              <ProtectedRoute>
+                <TagManager />
               </ProtectedRoute>
             } 
           />

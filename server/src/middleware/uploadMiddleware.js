@@ -1,12 +1,16 @@
 const multer = require('multer');
 const path = require('path');
 
+const fs = require('fs');
+
 // Configure storage for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // We can store locally in an 'uploads' directory temporarily
-    // until we implement Cloudinary/Supabase upload service
-    cb(null, 'uploads/');
+    const dir = 'uploads/';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);

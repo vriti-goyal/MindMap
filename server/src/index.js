@@ -7,6 +7,8 @@ const authRoutes = require('./routes/authRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const generationRoutes = require('./routes/generationRoutes');
 const mapRoutes = require('./routes/mapRoutes');
+const folderRoutes = require('./routes/folderRoutes');
+const tagRoutes = require('./routes/tagRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,6 +26,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/generate', generationRoutes);
 app.use('/api/maps', mapRoutes);
+app.use('/api/folders', folderRoutes);
+app.use('/api/tags', tagRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -40,4 +44,4 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-// Trigger nodemon restart 3
+// Trigger nodemon restart 5

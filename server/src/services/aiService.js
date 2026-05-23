@@ -19,13 +19,13 @@ const generateEmbedding = async (text) => {
 const generateMapData = async (text, mode) => {
   try {
     const systemInstruction = `You are a mind map generator. Based on the user input, extract key concepts as nodes and their relationships as edges.
-    Nodes should have:
+    Nodes must have:
     - id (unique string)
     - type (e.g., "concept", "subconcept", "detail")
     - label (short text label)
-    - xPos, yPos (relative floats starting around 0,0 spread out visually)
+    - xPos, yPos (Floats representing pixel coordinates for React Flow. Place the root concept at x=250, y=250. Branch out subconcepts and details in all directions [left, right, up, down] with at least 300px to 450px spacing between adjacent nodes to prevent overlaps. Example layout coordinates: root at (250, 250), children at (-200, 250), (700, 250), (250, -150), (250, 650) etc.)
     - content (optional longer description)
-    Edges should have:
+    Edges must have:
     - id (unique string)
     - sourceNodeId
     - targetNodeId

@@ -15,32 +15,58 @@ model User {
   createdAt     DateTime   @default(now())
   maps          Map[]
   documents     Document[]
+  folders       Folder[]
+  tags          Tag[]
 }
 
 model Document {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String
-  sourceType  String   // PDF, Image, URL, YouTube
-  storageUrl  String?
-  contentText String?
-  createdAt   DateTime @default(now())
-  maps        Map[]    @relation("MapDocuments")
+  id             String                  @id @default(uuid())
+  userId         String
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  sourceType     String                  // PDF, Image, URL, YouTube
+  storageUrl     String?
+  contentText    String?
+  createdAt      DateTime                @default(now())
+  
+  // Legacy / requested nullable map_id column
+  mapId          String?                 @map("map_id")
+  map            Map?                    @relation("LegacyMapDocuments", fields: [mapId], references: [id], onDelete: Cascade)
+
+  // Explicit many-to-many junction relationship
+  mapAttachments DocumentMapAttachment[]
 }
 
 model Map {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  embedding Unsupported("vector(768)")?
-  nodes     Node[]
-  edges     Edge[]
-  tags      String?  @default("")
-  documents Document[] @relation("MapDocuments")
+  id                  String                  @id @default(uuid())
+  userId              String
+  user                User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title               String
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  embedding           Unsupported("vector(768)")?
+  nodes               Node[]
+  edges               Edge[]
+  tags                String?                 @default("")
+  
+  // Legacy relation
+  legacyDocuments     Document[]              @relation("LegacyMapDocuments")
+
+  // Explicit many-to-many junction relationship
+  documentAttachments DocumentMapAttachment[]
+
+  folders             MapFolder[]
+  mapTags             MapTag[]
+}
+
+model DocumentMapAttachment {
+  documentId String   @map("document_id")
+  mapId      String   @map("map_id")
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  map        Map      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, mapId])
+  @@map("document_map_attachments")
 }
 
 model Node {
@@ -67,4 +93,47 @@ model Edge {
   
   sourceNode Node @relation("SourceEdges", fields: [sourceNodeId], references: [id], onDelete: Cascade)
   targetNode Node @relation("TargetEdges", fields: [targetNodeId], references: [id], onDelete: Cascade)
+}
+
+model Folder {
+  id             String      @id @default(uuid())
+  userId         String
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String      @db.VarChar(255)
+  parentFolderId String?
+  parentFolder   Folder?     @relation("SubFolders", fields: [parentFolderId], references: [id], onDelete: SetNull)
+  subFolders     Folder[]    @relation("SubFolders")
+  createdAt      DateTime    @default(now())
+  maps           MapFolder[]
+
+  @@unique([userId, name, parentFolderId])
+}
+
+model MapFolder {
+  mapId    String
+  folderId String
+  map      Map    @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  folder   Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@id([mapId, folderId])
+}
+
+model Tag {
+  id      String   @id @default(uuid())
+  userId  String
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name    String   @db.VarChar(100)
+  color   String   @default("#6366f1") @db.VarChar(7)
+  maps    MapTag[]
+
+  @@unique([userId, name])
+}
+
+model MapTag {
+  mapId String
+  tagId String
+  map   Map   @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([mapId, tagId])
 }

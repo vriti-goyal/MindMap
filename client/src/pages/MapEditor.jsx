@@ -28,9 +28,17 @@ import {
   Tag,
   Globe,
   Video,
-  ImageIcon
+  ImageIcon,
+  Upload,
+  Download,
+  Image as ImageIcon2,
+  Code
 } from 'lucide-react';
 import MindMapNode from '../components/CustomNode';
+import UploadManager from '../components/UploadManager';
+import { toPng, toSvg } from 'html-to-image';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const nodeTypes = {
   concept: MindMapNode,
@@ -54,6 +62,16 @@ const MapEditor = () => {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // 'success', 'error', null
   const [aiGeneratingTitle, setAiGeneratingTitle] = useState(false);
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+  const [regenerateModalOpen, setRegenerateModalOpen] = useState(false);
+  const [regeneratePrompt, setRegeneratePrompt] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const [exportingType, setExportingType] = useState(null); // 'png', 'svg', 'json', 'pdf'
+  
+  // Autosave State
+  const [autosaving, setAutosaving] = useState(false);
+  const isInitialMount = React.useRef(true);
   
   // Drawer States
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -99,7 +117,7 @@ const MapEditor = () => {
     [setEdges]
   );
 
-  // Save map state to DB
+  // Save map state to DB (Manual trigger)
   const saveMapState = async () => {
     try {
       setSaving(true);
@@ -121,6 +139,43 @@ const MapEditor = () => {
     }
   };
 
+  // Silent Save for autosave
+  const saveMapStateSilent = useCallback(async () => {
+    try {
+      setAutosaving(true);
+      setSaveStatus(null);
+      await axios.put(`/maps/${id}`, {
+        title,
+        tags,
+        nodes,
+        edges
+      });
+      setSaveStatus('autosaved');
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err) {
+      console.error('Failed to autosave map state:', err);
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus(null), 4000);
+    } finally {
+      setAutosaving(false);
+    }
+  }, [id, title, tags, nodes, edges]);
+
+  // Debounced Autosave Effect
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    if (loading) return;
+
+    const timer = setTimeout(() => {
+      saveMapStateSilent();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [nodes, edges, title, tags, loading, saveMapStateSilent]);
+
   // AI auto-generate title
   const handleAiTitleGenerate = async () => {
     try {
@@ -131,6 +186,37 @@ const MapEditor = () => {
       console.error('Failed to generate AI title:', err);
     } finally {
       setAiGeneratingTitle(false);
+    }
+  };
+
+  // Regenerate Map
+  const handleRegenerate = async (docId = null) => {
+    try {
+      setIsRegenerating(true);
+      setRegenerateModalOpen(false);
+      
+      // We pass the documentId if they selected one, otherwise we just use the prompt
+      await axios.post(`/generate/regenerate/${id}`, {
+        prompt: regeneratePrompt,
+        documentId: docId
+      });
+      
+      // Reload map data
+      const res = await axios.get(`/maps/${id}`);
+      setTitle(res.data.title);
+      setTags(res.data.tags || '');
+      setDocuments(res.data.documents || []);
+      setNodes(res.data.nodes || []);
+      setEdges(res.data.edges || []);
+      
+      setTimeout(() => {
+        fitView({ padding: 0.15, duration: 800 });
+      }, 100);
+    } catch (err) {
+      console.error('Failed to regenerate map:', err);
+      alert('Failed to regenerate map. Please try again.');
+    } finally {
+      setIsRegenerating(false);
     }
   };
 
@@ -290,6 +376,120 @@ const MapEditor = () => {
     return `http://localhost:5000/${doc.storageUrl}`; // Relative static file asset link
   };
 
+  // Export Utilities
+  const handleExport = async (type) => {
+    try {
+      setExportingType(type);
+      setExportDropdownOpen(false);
+      
+      const mapTitleSafe = title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'mindmap';
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filenameBase = `${mapTitleSafe}-${dateStr}`;
+
+      if (type === 'json') {
+        const exportData = {
+          version: "1.0",
+          exportedAt: new Date().toISOString(),
+          map: {
+            title,
+            nodes,
+            edges,
+            folders: [], // We don't have folders in editor state directly, but could fetch if needed
+            tags: tags ? tags.split(',').map(t => ({ name: t.trim() })) : []
+          }
+        };
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filenameBase}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setSaveStatus('success');
+        setTimeout(() => setSaveStatus(null), 2000);
+        return;
+      }
+
+      // For visual exports, we need the DOM node of the react flow viewport
+      const flowElement = document.querySelector('.react-flow__viewport');
+      if (!flowElement) throw new Error('Flow viewport not found');
+
+      if (type === 'png' || type === 'svg') {
+        const filter = (node) => !node.classList?.contains('react-flow__minimap') && !node.classList?.contains('react-flow__controls');
+        
+        if (type === 'png') {
+          const dataUrl = await toPng(flowElement, { filter, backgroundColor: '#030712' }); // gray-950
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = `${filenameBase}.png`;
+          a.click();
+        } else if (type === 'svg') {
+          const dataUrl = await toSvg(flowElement, { filter, backgroundColor: '#030712' });
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = `${filenameBase}.svg`;
+          a.click();
+        }
+      } else if (type === 'pdf') {
+        // Use html2canvas for PDF since it handles complex DOM better for PDFs
+        const canvas = await html2canvas(flowElement, {
+          backgroundColor: '#030712',
+          scale: 2 // Higher resolution
+        });
+        
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        const pdf = new jsPDF({
+          orientation: 'landscape',
+          unit: 'px',
+          format: 'a4'
+        });
+        
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        
+        // Add Header
+        pdf.setFillColor(3, 7, 18); // gray-950
+        pdf.rect(0, 0, pdfWidth, pdfHeight, 'F');
+        
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(16);
+        pdf.text(title || 'Untitled Mind Map', 20, 30);
+        
+        // Image
+        const imgProps = pdf.getImageProperties(imgData);
+        const margin = 40;
+        const availableWidth = pdfWidth - margin * 2;
+        const availableHeight = pdfHeight - margin * 2 - 20; // Extra space for header/footer
+        
+        const ratio = Math.min(availableWidth / imgProps.width, availableHeight / imgProps.height);
+        const imgX = (pdfWidth - imgProps.width * ratio) / 2;
+        const imgY = 50;
+        
+        pdf.addImage(imgData, 'JPEG', imgX, imgY, imgProps.width * ratio, imgProps.height * ratio);
+        
+        // Add Footer
+        pdf.setTextColor(156, 163, 175); // gray-400
+        pdf.setFontSize(10);
+        pdf.text(`Exported on ${new Date().toLocaleDateString()}`, 20, pdfHeight - 20);
+        
+        pdf.save(`${filenameBase}.pdf`);
+      }
+      
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus(null), 2000);
+      
+    } catch (error) {
+      console.error('Export failed:', error);
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus(null), 3000);
+    } finally {
+      setExportingType(null);
+    }
+  };
+
   // Spinner UI
   if (loading) {
     return (
@@ -377,12 +577,96 @@ const MapEditor = () => {
                 <CheckCircle className="w-3.5 h-3.5 mr-1.5" /> Saved
               </span>
             )}
+            {saveStatus === 'autosaved' && (
+              <span className="flex items-center text-gray-400 bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-xs font-medium shadow-md">
+                <CheckCircle className="w-3.5 h-3.5 mr-1.5" /> Autosaved
+              </span>
+            )}
+            {autosaving && !saving && (
+              <span className="flex items-center text-gray-400 bg-gray-800 border border-gray-700 px-3 py-2 rounded-xl text-xs font-medium shadow-md">
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Autosaving...
+              </span>
+            )}
             {saveStatus === 'error' && (
               <span className="text-rose-400 bg-rose-500/10 border border-rose-500/20 px-3 py-2 rounded-xl text-xs font-medium shadow-md">
                 Failed
               </span>
             )}
             
+            <button
+              onClick={() => setUploadDrawerOpen(true)}
+              className="px-4 py-2 bg-gray-900 border border-gray-800 hover:bg-gray-850 text-purple-400 hover:text-white rounded-xl text-xs font-semibold shadow-md flex items-center space-x-1.5 cursor-pointer justify-center"
+              title="Add Documents to Map"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">Add Documents</span>
+            </button>
+
+            {/* Export Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+                disabled={!!exportingType}
+                className="px-4 py-2 bg-gray-900 border border-gray-800 hover:bg-gray-850 text-indigo-400 hover:text-white rounded-xl text-xs font-semibold shadow-md flex items-center space-x-1.5 cursor-pointer justify-center disabled:opacity-70"
+                title="Export Map"
+              >
+                {exportingType ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span className="hidden lg:inline">Export</span>
+              </button>
+
+              {exportDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setExportDropdownOpen(false)}></div>
+                  <div className="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl z-20 overflow-hidden py-1">
+                    <button
+                      onClick={() => handleExport('png')}
+                      className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800 flex items-center space-x-2 cursor-pointer transition-colors"
+                    >
+                      <ImageIcon2 className="w-4 h-4 text-sky-400" />
+                      <span>Export as PNG</span>
+                    </button>
+                    <button
+                      onClick={() => handleExport('svg')}
+                      className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800 flex items-center space-x-2 cursor-pointer transition-colors"
+                    >
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <span>Export as SVG</span>
+                    </button>
+                    <button
+                      onClick={() => handleExport('json')}
+                      className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800 flex items-center space-x-2 cursor-pointer transition-colors"
+                    >
+                      <Code className="w-4 h-4 text-emerald-400" />
+                      <span>Export as JSON</span>
+                    </button>
+                    <button
+                      onClick={() => handleExport('pdf')}
+                      className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800 flex items-center space-x-2 cursor-pointer transition-colors"
+                    >
+                      <FileText className="w-4 h-4 text-rose-400" />
+                      <span>Export as PDF</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                setRegeneratePrompt(title);
+                setRegenerateModalOpen(true);
+              }}
+              className="px-4 py-2 bg-gray-900 border border-purple-500/50 hover:bg-gray-850 text-purple-300 hover:text-white rounded-xl text-xs font-semibold shadow-md flex items-center space-x-1.5 cursor-pointer justify-center"
+              title="Regenerate Map"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Regenerate</span>
+            </button>
+
             <button
               onClick={saveMapState}
               disabled={saving}
@@ -697,6 +981,100 @@ const MapEditor = () => {
           </div>
         )}
       </div>
+
+      {/* UploadManager Sliding Drawer */}
+      {uploadDrawerOpen && (
+        <UploadManager
+          context="map-editor"
+          mapId={id}
+          onUploadComplete={(newDocs) => {
+            // Transform to format expected by MapEditor
+            const formattedDocs = newDocs.map(doc => ({
+              id: doc.documentId,
+              title: doc.name,
+              sourceType: doc.type,
+              storageUrl: doc.url,
+              createdAt: doc.uploadedAt
+            }));
+            setDocuments(prev => [...prev, ...formattedDocs]);
+            setUploadDrawerOpen(false);
+          }}
+          onClose={() => setUploadDrawerOpen(false)}
+        />
+      )}
+
+      {/* Regenerate Modal */}
+      {regenerateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 w-full max-w-xl shadow-2xl relative">
+            <button
+              onClick={() => setRegenerateModalOpen(false)}
+              className="absolute top-4 right-4 p-2 hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+            
+            <h2 className="text-xl font-bold text-white mb-2 flex items-center">
+              <Sparkles className="w-5 h-5 mr-2 text-purple-400" />
+              Regenerate Map
+            </h2>
+            <p className="text-sm text-gray-400 mb-6">
+              Enter a new prompt to rebuild this map. All current nodes will be replaced. You can also upload a document to use as context.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">
+                  New Prompt
+                </label>
+                <textarea
+                  value={regeneratePrompt}
+                  onChange={(e) => setRegeneratePrompt(e.target.value)}
+                  className="w-full bg-gray-950 border border-gray-800 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 rounded-xl px-4 py-3 text-sm text-white outline-none resize-none"
+                  rows={3}
+                  placeholder="What should the new map be about?"
+                />
+              </div>
+
+              <div className="pt-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">
+                  Add Context Document (Optional)
+                </label>
+                <div className="border border-gray-800 rounded-xl overflow-hidden">
+                  <UploadManager 
+                    context="map-creation" 
+                    onUploadComplete={(docs) => {
+                      if (docs && docs.length > 0) {
+                        handleRegenerate(docs[0].documentId);
+                      }
+                    }} 
+                  />
+                </div>
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={() => handleRegenerate()}
+                  disabled={!regeneratePrompt.trim()}
+                  className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl font-bold shadow-lg shadow-purple-500/25 flex items-center justify-center space-x-2 transition-transform active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Regenerate Only from Prompt</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-screen Loading Overlay for Regeneration */}
+      {isRegenerating && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-950/90 backdrop-blur-md">
+          <Loader2 className="w-16 h-16 animate-spin text-purple-500 mb-6" />
+          <h2 className="text-2xl font-bold text-white mb-2">Regenerating Map</h2>
+          <p className="text-gray-400">Our AI is synthesizing new nodes and connections...</p>
+        </div>
+      )}
 
     </div>
   );
